@@ -77,16 +77,61 @@ get_tag_name(GumboElement* e) {
     return res;
 }
 
+char* call_Encode(str)
+    const char* str;
+{
+
+    PerlIO_printf( PerlIO_stderr(), "# ENCODE start %s\n", str);
+
+        dSP;
+        int count;
+        ENTER;
+        SAVETMPS;
+        PUSHMARK(SP);
+        EXTEND(SP, 1);
+        PUSHs(sv_2mortal(newSVpv(str, strlen(str))));
+        PUTBACK;
+        count = call_pv("HTML::Entities::encode_entities", G_SCALAR);
+        SPAGAIN;
+        if (count != 1) 
+            croak("encode_entities call failed\n");
+        
+
+        STRLEN len;
+        SV *sv = POPs;
+        const char *s = SvPV(sv, len);
+
+PerlIO_printf( PerlIO_stderr(), "# ENCODE end %s\n", s);
+
+        PUTBACK;
+        FREETMPS;
+        LEAVE;
+
+        return s;
+}
+
 STATIC void
-out_attr_value(SV* out, const char* v) {
+out_attr_value(SV* out, const char* v) { /* <<<------- */
     STRLEN i;
     STRLEN prev = 0;
     STRLEN len = strlen(v);
+
+/*
+        ---- need to do a call_pv
+        http://perldoc.perl.org/perlcall.html
+*/
+    sv_catpv(out, call_Encode(v) );
+    return;
+
+    PerlIO_printf( PerlIO_stderr(), "# VV  %s\n", v );
+
     for ( i = 0; i < len; i++ ) {
         if (v[i] != '"' && v[i] != '&' )
             continue;
+        /* very ugly manual encoding: should use HTML::Entities::encode_entities */
         if (i != prev)
             sv_catpvn(out, v+prev, i-prev);
+        
         sv_catpv(out, v[i] == '&'? "&amp;": "&quot;");
         prev = ++i;
     }
@@ -121,10 +166,12 @@ out_tag_start_line(SV* out, GumboElement* e) {
     for (i = 0; i < e->attributes.length; i++) {
         GumboAttribute* attr = (GumboAttribute*) e->attributes.data[i];
         sv_catpvs(out, " ");
+        PerlIO_printf( PerlIO_stderr(), "# ......... name %s\n", attr->name );
         sv_catpv(out, attr->name);
         if (strlen(attr->value)) {
             sv_catpvs(out, "=\"");
             out_attr_value(out, attr->value);
+            PerlIO_printf( PerlIO_stderr(), "# ......... value %s\n", attr->value );
             sv_catpvs(out, "\"");
         }
     }
@@ -176,6 +223,9 @@ out_doctype( SV* out, GumboDocument* doc ) {
 STATIC void
 tree_to_string(pTHX_ PerlHtmlGumboType type, GumboNode* node, void* ctx) {
     SV* out = (SV*) ctx;
+
+    PerlIO_printf( PerlIO_stderr(), "# here... tree to string\n" );
+
     if ( type == PHG_TEXT ) {
         if ( node->type == GUMBO_NODE_COMMENT ) {
             sv_catpvs(out, "<!--");
@@ -184,8 +234,11 @@ tree_to_string(pTHX_ PerlHtmlGumboType type, GumboNode* node, void* ctx) {
             sv_catpvs(out, "<![CDATA[");
         }
         if ( node->type == GUMBO_NODE_TEXT ) {
+           // PerlIO_printf( PerlIO_stderr(), "# a %s\n", node->v.text.text );
+
             out_text(out, node->v.text.text);
         } else {
+            //PerlIO_printf( PerlIO_stderr(), "# b %s\n", node->v.text.text );
             sv_catpv(out, node->v.text.text);
         }
         if ( node->type == GUMBO_NODE_COMMENT ) {
@@ -197,23 +250,30 @@ tree_to_string(pTHX_ PerlHtmlGumboType type, GumboNode* node, void* ctx) {
     }
     else if ( type == PHG_ELEMENT_START && node->type == GUMBO_NODE_DOCUMENT ) {
         GumboDocument* doc = &node->v.document;
-        if ( doc->has_doctype )
+        if ( doc->has_doctype ) {
+            //PerlIO_printf( PerlIO_stderr(), "# out_doctype\n" );
             out_doctype(out, doc);
+        }
     }
     else if ( type == PHG_ELEMENT_END && node->type == GUMBO_NODE_DOCUMENT ) {
         sv_catpvs(out, "\n");
     }
     else if ( type == PHG_ELEMENT_START ) {
         GumboElement* e = &node->v.element;
-        out_tag_start_line(out, e);
-        if ( e->tag == GUMBO_TAG_PRE || e->tag == GUMBO_TAG_TEXTAREA ) {
+        PerlIO_printf( PerlIO_stderr(), "# IN out_tag_start_line %s\n", SvPV_nolen(out) );
+        out_tag_start_line(out, e); /* <--- */
+        PerlIO_printf( PerlIO_stderr(), "# OUT out_tag_start_line %s\n", SvPV_nolen(out) );
+        if ( e->tag == GUMBO_TAG_PRE || e->tag == GUMBO_TAG_TEXTAREA ) {             
             sv_catpvs(out, "\n");
         }
     }
     else if ( type == PHG_ELEMENT_END ) {
         GumboElement* e = &node->v.element;
+        PerlIO_printf( PerlIO_stderr(), "# out_tag_end_line\n" );
         out_tag_end_line(out, e);
     }
+
+    PerlIO_printf( PerlIO_stderr(), "---> out %s\n", SvPV_nolen(out) );
     return;
 }
 
@@ -541,8 +601,12 @@ common_parse(pTHX_ SV* buffer, HV* opts, SV* (*cb)(pTHX_ GumboNode*, int, void*)
     if ( options.fragment_context != GUMBO_TAG_LAST ) {
         flags |= PHG_FLAG_SKIP_ROOT_ELEMENT;
     }
+
     GumboOutput* output = gumbo_parse_with_options(&options, str, len);
+    
     res = cb(aTHX_ output->document, flags, payload);
+    
+
     gumbo_destroy_output(&options, output);
     return res;
 }

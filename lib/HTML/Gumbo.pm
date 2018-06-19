@@ -7,6 +7,8 @@ package HTML::Gumbo;
 use Alien::LibGumbo 0.03;
 our $VERSION = '0.17';
 
+use HTML::Entities (); # use for proper encoding
+
 require XSLoader;
 XSLoader::load('HTML::Gumbo', $VERSION);
 
@@ -287,7 +289,7 @@ sub parse {
             Encode::from_to($what, $enc, 'UTF-8');
         }
     }
-
+use Test::More; note "--- WHAT ", $what;
     return $self->$method( \$what, \%args );
 }
 
